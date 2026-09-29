@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { instanceToPlain } from 'class-transformer';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { Merchant, MerchantStatus, MerchantRole } from '../merchants/entities/merchant.entity';
@@ -60,12 +61,9 @@ export class AdminService {
     const log = this.auditLogRepo.create({
       actor: entry.actor ?? 'system',
       action: entry.action,
-      resource: entry.resourceId
-        ? `${entry.resourceType}:${entry.resourceId}`
-        : entry.resourceType,
-      before: null,
-      after: entry.details ?? null,
-      ip: null,
+      resourceType: entry.resourceType,
+      resourceId: entry.resourceId ?? undefined,
+      details: entry.details ?? null,
     });
     await this.auditLogRepo.save(log);
   }
@@ -195,9 +193,16 @@ export class AdminService {
     };
   }
 
+  /**
+   * Serialize a Merchant through class-transformer so @Exclude() / @Transform()
+   * on the entity (passwordHash, apiKeyHash, totpSecret, bankAccountNumber, …)
+   * are applied. Manual destructuring is avoided — it drifts from the entity
+   * masks and also downgrades class instances to plain objects that skip transforms.
+   */
   private sanitize(merchant: Merchant) {
-    const { passwordHash, apiKeyHash, ...rest } = merchant as any;
-    return rest;
+    const instance =
+      merchant instanceof Merchant ? merchant : Object.assign(new Merchant(), merchant);
+    return instanceToPlain(instance);
   }
 
   // ── Fee Management ─────────────────────────────────────────────────────────
@@ -442,7 +447,7 @@ export class AdminService {
     const rows = data.map(row =>
       columns
         .map(col => {
-          const val = (row as Record<string, unknown>)[col];
+          const val = (row as unknown as Record<string, unknown>)[col];
           return this.csvField(val);
         })
         .join(','),
@@ -516,8 +521,18 @@ export class AdminService {
   }
 
   private verifyTotpToken(secret: string, token: string): boolean {
+    if (typeof token !== 'string' || token.length !== 6) {
+      return false;
+    }
     const t = Math.floor(Date.now() / 1000);
-    return [-1, 0, 1].some(w => this.totpCode(secret, t + w * 30) === token);
+    const tokenBuf = Buffer.from(token);
+    return [-1, 0, 1].some((w) => {
+      const expectedBuf = Buffer.from(this.totpCode(secret, t + w * 30));
+      return (
+        expectedBuf.length === tokenBuf.length &&
+        crypto.timingSafeEqual(expectedBuf, tokenBuf)
+      );
+    });
   }
 
   // ── Generic Record Management (#soft-delete) ───────────────────────────────
