@@ -1,11 +1,16 @@
 import { Connection, In } from 'typeorm';
 import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
 import { Merchant, MerchantRole, MerchantStatus } from '../../merchants/entities/merchant.entity';
 import { Payment, PaymentNetwork, PaymentStatus } from '../../payments/entities/payment.entity';
 import { Settlement, SettlementStatus } from '../../settlements/entities/settlement.entity';
 import { seedAppConfigs } from './app-config.seed';
 
 const DEFAULT_PASSWORD = 'Password123!';
+
+function generateRandomPassword(): string {
+  return crypto.randomBytes(18).toString('base64url');
+}
 
 const FIXED_IDS = {
   admin: '00000000-0000-0000-0000-000000000001',
@@ -33,6 +38,8 @@ export async function seedDatabase(connection: Connection, predictableIds = fals
 
 async function seedMerchants(connection: Connection, predictableIds: boolean) {
   const repo = connection.getRepository(Merchant);
+  const adminPassword = generateRandomPassword();
+  const adminPasswordHash = await bcrypt.hash(adminPassword, 10);
   const passwordHash = await bcrypt.hash(DEFAULT_PASSWORD, 10);
   const seeds = [
     {
@@ -43,7 +50,7 @@ async function seedMerchants(connection: Connection, predictableIds: boolean) {
       country: 'US',
       status: MerchantStatus.ACTIVE,
       role: MerchantRole.ADMIN,
-      passwordHash,
+      passwordHash: adminPasswordHash,
     },
     {
       id: predictableIds ? FIXED_IDS.merchant1 : undefined,
@@ -94,6 +101,8 @@ async function seedMerchants(connection: Connection, predictableIds: boolean) {
   }
 
   console.log('Merchants seeded.');
+  console.log(`Seeded admin account: admin@localhost`);
+  console.log(`Generated admin password (shown once): ${adminPassword}`);
   return saved;
 }
 
@@ -220,4 +229,4 @@ async function seedPayments(
       metadata: { source: 'seed' },
       confirmedAt: new Date(),
       settlementId: settlementMap.get('SETTLEMENT-COMPLETE-1')?.id,
-      settl
+      settlementId: settlementMap.get('SETTLEMENT-COMPLETE-1')?.id,
