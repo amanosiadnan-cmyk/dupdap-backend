@@ -33,6 +33,43 @@ export class HealthController {
     return { status: 'ok' };
   }
 
+  @Get('live')
+  @ApiOperation({ summary: 'Kubernetes liveness probe — process alive, no dependency checks' })
+  live() {
+    // Liveness must never touch external dependencies: a failing DB/Redis
+    // must not cause the container to be restarted.
+    return { status: 'ok' };
+  }
+
+  @Get('ready')
+  @ApiOperation({ summary: 'Kubernetes readiness probe — DB, Redis, and Stellar must be reachable' })
+  async ready() {
+    const [db, redis, stellar] = await Promise.allSettled([
+      this.db.pingCheck('database'),
+      this.cache.ping(),
+      this.http.pingCheck(
+        'stellar',
+        `${this.config.get('STELLAR_HORIZON_URL', 'https://horizon-testnet.stellar.org')}/`,
+      ),
+    ]);
+    const failed =
+      db.status === 'rejected' ||
+      redis.status === 'rejected' ||
+      stellar.status === 'rejected';
+    if (failed) {
+      throw new HttpException(
+        {
+          status: 'not ready',
+          database: db.status,
+          redis: redis.status,
+          stellar: stellar.status,
+        },
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+    return { status: 'ready' };
+  }
+
   @Get('admin')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
